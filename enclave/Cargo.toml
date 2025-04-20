@@ -1,0 +1,16 @@
+[package]
+name = "enclave"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sp-runtime = { version = "41.1.0", default-features = false, features = ["std"] }
+sp-core = { version = "36.0.0", default-features = false, features = ["std"] }
+bip39 = { version = "2.1.0", features = ["rand"] }
+hex = "0.4.3"
+rand = "0.8"
+blahaj = "0.6"
+ethers = "2.0.14"
+solana-sdk = "2.2.2"
+signal-hook-registry = "=1.4.0"
+ed25519-hd-key = "0.3.0"

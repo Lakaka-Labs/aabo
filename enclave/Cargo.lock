@@ -1247,6 +1247,7 @@ name = "enclave"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "base64 0.22.1",
  "bip39",
  "blahaj",
  "ed25519-hd-key",

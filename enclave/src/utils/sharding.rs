@@ -1,5 +1,5 @@
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use blahaj::{Share, Sharks};
-use hex::{decode as hex_decode, encode as hex_encode};
 use thiserror::Error;
 
 const THRESHOLD: u8 = 2;
@@ -17,14 +17,14 @@ pub enum ShardingError {
 pub fn split_secret(secret: Vec<u8>) -> Vec<String> {
     let dealer = SHARKS.dealer(&secret);
     let shares: Vec<Share> = dealer.take(TOTAL_SHARES).collect();
-    let shares_bytes: Vec<String> = shares.iter().map(|x| share_to_hex(x)).collect();
+    let shares_bytes: Vec<String> = shares.iter().map(|x| share_to_base64(x)).collect();
     shares_bytes
 }
 
 pub fn recover_secret(shares_bytes: Vec<String>) -> Result<Vec<u8>, ShardingError> {
     let shares: Vec<Share> = shares_bytes
         .iter()
-        .map(|s| hex_to_share(s))
+        .map(|s| base64_to_share(s))
         .collect::<Result<Vec<_>, _>>()?;
 
     let secret = SHARKS.recover(shares.as_slice()).map_err(|_| {
@@ -36,13 +36,13 @@ pub fn recover_secret(shares_bytes: Vec<String>) -> Result<Vec<u8>, ShardingErro
     Ok(secret)
 }
 
-fn share_to_hex(share: &Share) -> String {
+fn share_to_base64(share: &Share) -> String {
     let bytes = Vec::from(share);
-    hex_encode(bytes)
+    BASE64.encode(bytes)
 }
 
-fn hex_to_share(hex_str: &str) -> Result<Share, ShardingError> {
-    let decoded_bytes = hex_decode(hex_str).map_err(|_| {
+fn base64_to_share(base64_str: &str) -> Result<Share, ShardingError> {
+    let decoded_bytes = BASE64.decode(base64_str).map_err(|_| {
         ShardingError::InvalidShare("Failed to create share from slice".to_string())
     })?;
 

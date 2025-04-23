@@ -2,7 +2,7 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
     aead::{Aead, AeadCore, KeyInit, OsRng},
 };
-use hex::{decode as hex_decode, encode as hex_encode};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use k256::ecdh::diffie_hellman;
 use k256::{PublicKey, SecretKey, ecdh::EphemeralSecret};
 use sha2::{Digest, Sha256};
@@ -20,11 +20,8 @@ pub enum EncryptionError {
     ErrorSigningData(String),
 }
 
-pub fn encrypt(
-    receiver_public_key_string: &str,
-    data: Vec<u8>,
-) -> Result<(String, String), EncryptionError> {
-    let receiver_public_key = hex_to_public_key(&receiver_public_key_string)?;
+pub fn encrypt(receiver_public_key_string: &str, data: Vec<u8>) -> Result<String, EncryptionError> {
+    let receiver_public_key = base64_to_public_key(&receiver_public_key_string)?;
     let ephemeral_secret_key = EphemeralSecret::random(&mut OsRng);
     let ephemeral_public_key = PublicKey::from(&ephemeral_secret_key);
 
@@ -44,20 +41,39 @@ pub fn encrypt(
     let mut encrypted_data = nonce.to_vec();
     encrypted_data.extend_from_slice(&ciphertext);
 
-    Ok((
-        public_key_to_hex(&ephemeral_public_key),
-        hex_encode(encrypted_data),
-    ))
+    let combined_encryption = format!(
+        "{}:{}",
+        public_key_to_base64(&ephemeral_public_key),
+        BASE64.encode(encrypted_data)
+    );
+    Ok(BASE64.encode(combined_encryption.as_bytes()))
 }
 
 pub fn decrypt(
     receiver_secret_key_string: &str,
-    ephemeral_public_key_string: &str,
-    encrypted_data: &str,
+    combined_encryption: &str,
 ) -> Result<Vec<u8>, EncryptionError> {
-    let receiver_secret_key = hex_to_secret_key(&receiver_secret_key_string)?;
+    let combined = BASE64.decode(combined_encryption).map_err(|_| {
+        EncryptionError::InvalidEncryptedData("Invalid Base64 encoding".to_string())
+    })?;
 
-    let encrypted_data_byte = hex_decode(encrypted_data).map_err(|_| {
+    let combined_str = String::from_utf8(combined).map_err(|_| {
+        EncryptionError::InvalidEncryptedData("Invalid UTF-8 in decoded data".to_string())
+    })?;
+
+    let parts: Vec<&str> = combined_str.split(':').collect();
+    if parts.len() != 2 {
+        return Err(EncryptionError::InvalidEncryptedData(
+            "Invalid combined data format".to_string(),
+        ));
+    }
+
+    let ephemeral_public_key_string = parts[0];
+    let encrypted_data = parts[1];
+
+    let receiver_secret_key = base64_to_secret_key(&receiver_secret_key_string)?;
+
+    let encrypted_data_byte = BASE64.decode(encrypted_data).map_err(|_| {
         EncryptionError::InvalidSecretKey("Failed to create Secret Key from slice".to_string())
     })?;
     if encrypted_data_byte.len() <= 12 {
@@ -70,7 +86,7 @@ pub fn decrypt(
 
     let nonce = Nonce::from_slice(nonce_bytes);
 
-    let public_key = hex_to_public_key(&ephemeral_public_key_string)?;
+    let public_key = base64_to_public_key(&ephemeral_public_key_string)?;
     let shared_secret = diffie_hellman(
         receiver_secret_key.to_nonzero_scalar(),
         public_key.as_affine(),
@@ -91,30 +107,25 @@ pub fn decrypt(
 
 pub fn re_encrypt(
     old_secret_key_string: &str,
-    ephemeral_public_key_string: &str,
-    encrypted_data: &str,
+    combined_encryption: &str,
     new_public_key_string: &str,
-) -> Result<(String, String), EncryptionError> {
-    let data = decrypt(
-        old_secret_key_string,
-        ephemeral_public_key_string,
-        encrypted_data,
-    )?;
+) -> Result<String, EncryptionError> {
+    let data = decrypt(old_secret_key_string, combined_encryption)?;
     encrypt(new_public_key_string, data)
 }
 
-fn secret_key_to_hex(secret_key: &SecretKey) -> String {
+fn secret_key_to_base64(secret_key: &SecretKey) -> String {
     let bytes = secret_key.to_bytes();
-    hex_encode(bytes)
+    BASE64.encode(bytes)
 }
 
-fn public_key_to_hex(public_key: &PublicKey) -> String {
+fn public_key_to_base64(public_key: &PublicKey) -> String {
     let bytes = public_key.to_sec1_bytes();
-    hex_encode(bytes)
+    BASE64.encode(bytes)
 }
 
-fn hex_to_secret_key(hex_str: &str) -> Result<SecretKey, EncryptionError> {
-    let decoded_bytes = hex_decode(hex_str).map_err(|_| {
+fn base64_to_secret_key(base64_str: &str) -> Result<SecretKey, EncryptionError> {
+    let decoded_bytes = BASE64.decode(base64_str).map_err(|_| {
         EncryptionError::InvalidSecretKey("Failed to create Secret Key from slice".to_string())
     })?;
 
@@ -124,8 +135,8 @@ fn hex_to_secret_key(hex_str: &str) -> Result<SecretKey, EncryptionError> {
     Ok(secret_key)
 }
 
-fn hex_to_public_key(hex_str: &str) -> Result<PublicKey, EncryptionError> {
-    let decoded_bytes = hex_decode(hex_str).map_err(|_| {
+fn base64_to_public_key(base64_str: &str) -> Result<PublicKey, EncryptionError> {
+    let decoded_bytes = BASE64.decode(base64_str).map_err(|_| {
         EncryptionError::InvalidPublicKey("Failed to create Public Key from slice".to_string())
     })?;
 
@@ -146,13 +157,13 @@ mod test {
     }
 
     #[test]
-    fn test_hex_to_keys() {
+    fn test_base64_to_keys() {
         let (secret_key, public_key) = generate_receiver_keypair();
-        let secret_key_string = secret_key_to_hex(&secret_key);
-        let public_key_string = public_key_to_hex(&public_key);
+        let secret_key_string = secret_key_to_base64(&secret_key);
+        let public_key_string = public_key_to_base64(&public_key);
 
-        let reconverted_secret_key = hex_to_secret_key(&secret_key_string).unwrap();
-        let reconverted_public_key = hex_to_public_key(&public_key_string).unwrap();
+        let reconverted_secret_key = base64_to_secret_key(&secret_key_string).unwrap();
+        let reconverted_public_key = base64_to_public_key(&public_key_string).unwrap();
 
         assert_eq!(secret_key, reconverted_secret_key);
         assert_eq!(public_key, reconverted_public_key);
@@ -161,51 +172,44 @@ mod test {
     #[test]
     fn test_encrypt_and_decrypt() {
         let (secret_key, public_key) = generate_receiver_keypair();
-        let secret_key_string = secret_key_to_hex(&secret_key);
-        let public_key_string = public_key_to_hex(&public_key);
+        let secret_key_string = secret_key_to_base64(&secret_key);
+        let public_key_string = public_key_to_base64(&public_key);
 
         let data = "this is a secret";
 
-        let (ephemeral_public_key, encrypted_data) =
-            encrypt(&public_key_string, data.as_bytes().to_vec()).unwrap();
+        let combined_encryption = encrypt(&public_key_string, data.as_bytes().to_vec()).unwrap();
+        println!("{combined_encryption}");
 
-        let decrypted_data =
-            decrypt(&secret_key_string, &ephemeral_public_key, &encrypted_data).unwrap();
+        let decrypted_data = decrypt(&secret_key_string, &combined_encryption).unwrap();
+        println!("{}", str::from_utf8(&decrypted_data).unwrap());
 
         assert_eq!(data.as_bytes(), decrypted_data)
     }
-    
+
     #[test]
     fn test_re_encrypt() {
         let (secret_key, public_key) = generate_receiver_keypair();
-        let secret_key_string = secret_key_to_hex(&secret_key);
-        let public_key_string = public_key_to_hex(&public_key);
+        let secret_key_string = secret_key_to_base64(&secret_key);
+        let public_key_string = public_key_to_base64(&public_key);
 
         let data = "this is a secret";
 
-        let (ephemeral_public_key, encrypted_data) =
-            encrypt(&public_key_string, data.as_bytes().to_vec()).unwrap();
-        
-        let (new_secret_key, new_public_key) = generate_receiver_keypair();
-        let new_secret_key_string = secret_key_to_hex(&new_secret_key);
-        let new_public_key_string = public_key_to_hex(&new_public_key);
+        let combined_encryption = encrypt(&public_key_string, data.as_bytes().to_vec()).unwrap();
 
-        let (new_ephemeral_public_key, new_encrypted_data) = re_encrypt(
+        let (new_secret_key, new_public_key) = generate_receiver_keypair();
+        let new_secret_key_string = secret_key_to_base64(&new_secret_key);
+        let new_public_key_string = public_key_to_base64(&new_public_key);
+
+        let new_combined_encryption = re_encrypt(
             &secret_key_string,
-            &ephemeral_public_key,
-            &encrypted_data,
+            &combined_encryption,
             &new_public_key_string,
         )
         .unwrap();
 
-        let new_decrypted_data = decrypt(
-            &new_secret_key_string,
-            &new_ephemeral_public_key,
-            &new_encrypted_data,
-        )
-        .unwrap();
+        let new_decrypted_data = decrypt(&new_secret_key_string, &new_combined_encryption).unwrap();
 
-        assert_ne!(new_encrypted_data, encrypted_data);
+        assert_ne!(new_combined_encryption, combined_encryption);
         assert_eq!(data.as_bytes(), new_decrypted_data);
     }
 }

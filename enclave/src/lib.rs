@@ -1,5 +1,5 @@
-pub mod generate;
-mod sharding;
+pub mod utils;
+mod ethereum;
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right

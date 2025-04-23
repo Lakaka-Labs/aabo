@@ -4,8 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-sp-runtime = { version = "41.1.0", default-features = false, features = ["std"] }
-sp-core = { version = "36.0.0", default-features = false, features = ["std"] }
 bip39 = { version = "2.1.0", features = ["rand"] }
 hex = "0.4.3"
 rand = "0.8"
@@ -14,3 +12,9 @@ ethers = "2.0.14"
 solana-sdk = "2.2.2"
 signal-hook-registry = "=1.4.0"
 ed25519-hd-key = "0.3.0"
+thiserror = "2.0.12"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+k256 = { version = "0.13.4", features = ["ecdh"] }
+aes-gcm = "0.10.3"
+sha2 = "0.10.8"

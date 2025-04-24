@@ -6,21 +6,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use k256::ecdh::diffie_hellman;
 use k256::{PublicKey, SecretKey, ecdh::EphemeralSecret};
 use sha2::{Digest, Sha256};
-use thiserror::Error;
+use crate::utils::encryption::EncryptionError;
 
-#[derive(Error, Debug)]
-pub enum EncryptionError {
-    #[error("Secret Key provided is invalid")]
-    InvalidSecretKey(String),
-    #[error("Encrypted data is invalid")]
-    InvalidEncryptedData(String),
-    #[error("Public Key provided is invalid")]
-    InvalidPublicKey(String),
-    #[error("Failed to sign data provide")]
-    ErrorSigningData(String),
-}
-
-pub fn encrypt(receiver_public_key_string: &str, data: Vec<u8>) -> Result<String, EncryptionError> {
+pub fn hybrid_encrypt(receiver_public_key_string: &str, data: Vec<u8>) -> Result<String, EncryptionError> {
     let receiver_public_key = base64_to_public_key(&receiver_public_key_string)?;
     let ephemeral_secret_key = EphemeralSecret::random(&mut OsRng);
     let ephemeral_public_key = PublicKey::from(&ephemeral_secret_key);
@@ -49,7 +37,7 @@ pub fn encrypt(receiver_public_key_string: &str, data: Vec<u8>) -> Result<String
     Ok(BASE64.encode(combined_encryption.as_bytes()))
 }
 
-pub fn decrypt(
+pub fn hybrid_decrypt(
     receiver_secret_key_string: &str,
     combined_encryption: &str,
 ) -> Result<Vec<u8>, EncryptionError> {
@@ -105,13 +93,13 @@ pub fn decrypt(
     Ok(data)
 }
 
-pub fn re_encrypt(
+pub fn hybrid_re_encrypt(
     old_secret_key_string: &str,
     combined_encryption: &str,
     new_public_key_string: &str,
 ) -> Result<String, EncryptionError> {
-    let data = decrypt(old_secret_key_string, combined_encryption)?;
-    encrypt(new_public_key_string, data)
+    let data = hybrid_decrypt(old_secret_key_string, combined_encryption)?;
+    hybrid_encrypt(new_public_key_string, data)
 }
 
 fn secret_key_to_base64(secret_key: &SecretKey) -> String {
@@ -170,44 +158,42 @@ mod test {
     }
 
     #[test]
-    fn test_encrypt_and_decrypt() {
+    fn test_hybrid_encrypt_and_hybrid_decrypt() {
         let (secret_key, public_key) = generate_receiver_keypair();
         let secret_key_string = secret_key_to_base64(&secret_key);
         let public_key_string = public_key_to_base64(&public_key);
 
         let data = "this is a secret";
 
-        let combined_encryption = encrypt(&public_key_string, data.as_bytes().to_vec()).unwrap();
-        println!("{combined_encryption}");
+        let combined_encryption = hybrid_encrypt(&public_key_string, data.as_bytes().to_vec()).unwrap();
 
-        let decrypted_data = decrypt(&secret_key_string, &combined_encryption).unwrap();
-        println!("{}", str::from_utf8(&decrypted_data).unwrap());
+        let decrypted_data = hybrid_decrypt(&secret_key_string, &combined_encryption).unwrap();
 
         assert_eq!(data.as_bytes(), decrypted_data)
     }
 
     #[test]
-    fn test_re_encrypt() {
+    fn test_hybrid_re_encrypt() {
         let (secret_key, public_key) = generate_receiver_keypair();
         let secret_key_string = secret_key_to_base64(&secret_key);
         let public_key_string = public_key_to_base64(&public_key);
 
         let data = "this is a secret";
 
-        let combined_encryption = encrypt(&public_key_string, data.as_bytes().to_vec()).unwrap();
+        let combined_encryption = hybrid_encrypt(&public_key_string, data.as_bytes().to_vec()).unwrap();
 
         let (new_secret_key, new_public_key) = generate_receiver_keypair();
         let new_secret_key_string = secret_key_to_base64(&new_secret_key);
         let new_public_key_string = public_key_to_base64(&new_public_key);
 
-        let new_combined_encryption = re_encrypt(
+        let new_combined_encryption = hybrid_re_encrypt(
             &secret_key_string,
             &combined_encryption,
             &new_public_key_string,
         )
         .unwrap();
 
-        let new_decrypted_data = decrypt(&new_secret_key_string, &new_combined_encryption).unwrap();
+        let new_decrypted_data = hybrid_decrypt(&new_secret_key_string, &new_combined_encryption).unwrap();
 
         assert_ne!(new_combined_encryption, combined_encryption);
         assert_eq!(data.as_bytes(), new_decrypted_data);

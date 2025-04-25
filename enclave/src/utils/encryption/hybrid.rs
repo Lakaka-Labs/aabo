@@ -1,3 +1,4 @@
+use crate::utils::encryption::EncryptionError;
 use aes_gcm::{
     Aes256Gcm, Nonce,
     aead::{Aead, AeadCore, KeyInit, OsRng},
@@ -6,9 +7,11 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use k256::ecdh::diffie_hellman;
 use k256::{PublicKey, SecretKey, ecdh::EphemeralSecret};
 use sha2::{Digest, Sha256};
-use crate::utils::encryption::EncryptionError;
 
-pub fn hybrid_encrypt(receiver_public_key_string: &str, data: Vec<u8>) -> Result<String, EncryptionError> {
+pub fn hybrid_encrypt(
+    receiver_public_key_string: String,
+    data: &[u8],
+) -> Result<(String, String), EncryptionError> {
     let receiver_public_key = base64_to_public_key(&receiver_public_key_string)?;
     let ephemeral_secret_key = EphemeralSecret::random(&mut OsRng);
     let ephemeral_public_key = PublicKey::from(&ephemeral_secret_key);
@@ -22,43 +25,24 @@ pub fn hybrid_encrypt(receiver_public_key_string: &str, data: Vec<u8>) -> Result
     let cipher = Aes256Gcm::new(symmetric_key.as_slice().into());
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
 
-    let ciphertext = cipher.encrypt(&nonce, data.as_slice()).map_err(|_| {
+    let ciphertext = cipher.encrypt(&nonce, data).map_err(|_| {
         EncryptionError::ErrorSigningData("Failed to sign data provide".to_string())
     })?;
 
     let mut encrypted_data = nonce.to_vec();
     encrypted_data.extend_from_slice(&ciphertext);
 
-    let combined_encryption = format!(
-        "{}:{}",
+    Ok((
         public_key_to_base64(&ephemeral_public_key),
-        BASE64.encode(encrypted_data)
-    );
-    Ok(BASE64.encode(combined_encryption.as_bytes()))
+        BASE64.encode(encrypted_data),
+    ))
 }
 
 pub fn hybrid_decrypt(
-    receiver_secret_key_string: &str,
-    combined_encryption: &str,
+    receiver_secret_key_string: String,
+    ephemeral_public_key_string: String,
+    encrypted_data: String,
 ) -> Result<Vec<u8>, EncryptionError> {
-    let combined = BASE64.decode(combined_encryption).map_err(|_| {
-        EncryptionError::InvalidEncryptedData("Invalid Base64 encoding".to_string())
-    })?;
-
-    let combined_str = String::from_utf8(combined).map_err(|_| {
-        EncryptionError::InvalidEncryptedData("Invalid UTF-8 in decoded data".to_string())
-    })?;
-
-    let parts: Vec<&str> = combined_str.split(':').collect();
-    if parts.len() != 2 {
-        return Err(EncryptionError::InvalidEncryptedData(
-            "Invalid combined data format".to_string(),
-        ));
-    }
-
-    let ephemeral_public_key_string = parts[0];
-    let encrypted_data = parts[1];
-
     let receiver_secret_key = base64_to_secret_key(&receiver_secret_key_string)?;
 
     let encrypted_data_byte = BASE64.decode(encrypted_data).map_err(|_| {
@@ -94,12 +78,17 @@ pub fn hybrid_decrypt(
 }
 
 pub fn hybrid_re_encrypt(
-    old_secret_key_string: &str,
-    combined_encryption: &str,
-    new_public_key_string: &str,
-) -> Result<String, EncryptionError> {
-    let data = hybrid_decrypt(old_secret_key_string, combined_encryption)?;
-    hybrid_encrypt(new_public_key_string, data)
+    old_secret_key_string: String,
+    ephemeral_public_key_string: String,
+    encrypted_data: String,
+    new_public_key_string: String,
+) -> Result<(String, String), EncryptionError> {
+    let data = hybrid_decrypt(
+        old_secret_key_string,
+        ephemeral_public_key_string,
+        encrypted_data,
+    )?;
+    hybrid_encrypt(new_public_key_string, &data)
 }
 
 fn secret_key_to_base64(secret_key: &SecretKey) -> String {
@@ -108,8 +97,7 @@ fn secret_key_to_base64(secret_key: &SecretKey) -> String {
 }
 
 fn public_key_to_base64(public_key: &PublicKey) -> String {
-    let bytes = public_key.to_sec1_bytes();
-    BASE64.encode(bytes)
+    BASE64.encode(public_key.to_sec1_bytes())
 }
 
 fn base64_to_secret_key(base64_str: &str) -> Result<SecretKey, EncryptionError> {
@@ -165,9 +153,11 @@ mod test {
 
         let data = "this is a secret";
 
-        let combined_encryption = hybrid_encrypt(&public_key_string, data.as_bytes().to_vec()).unwrap();
+        let (ephemeral_public_key, encrypted_data) =
+            hybrid_encrypt(public_key_string, data.as_bytes()).unwrap();
 
-        let decrypted_data = hybrid_decrypt(&secret_key_string, &combined_encryption).unwrap();
+        let decrypted_data =
+            hybrid_decrypt(secret_key_string, ephemeral_public_key, encrypted_data).unwrap();
 
         assert_eq!(data.as_bytes(), decrypted_data)
     }
@@ -180,22 +170,30 @@ mod test {
 
         let data = "this is a secret";
 
-        let combined_encryption = hybrid_encrypt(&public_key_string, data.as_bytes().to_vec()).unwrap();
+        let (ephemeral_public_key, encrypted_data) =
+            hybrid_encrypt(public_key_string, data.as_bytes()).unwrap();
 
         let (new_secret_key, new_public_key) = generate_receiver_keypair();
         let new_secret_key_string = secret_key_to_base64(&new_secret_key);
         let new_public_key_string = public_key_to_base64(&new_public_key);
 
-        let new_combined_encryption = hybrid_re_encrypt(
-            &secret_key_string,
-            &combined_encryption,
-            &new_public_key_string,
+        let (new_ephemeral_public_key, new_encrypted_data) = hybrid_re_encrypt(
+            secret_key_string,
+            ephemeral_public_key.clone(),
+            encrypted_data.clone(),
+            new_public_key_string,
         )
         .unwrap();
 
-        let new_decrypted_data = hybrid_decrypt(&new_secret_key_string, &new_combined_encryption).unwrap();
+        let new_decrypted_data = hybrid_decrypt(
+            new_secret_key_string,
+            new_ephemeral_public_key.clone(),
+            new_encrypted_data.clone(),
+        )
+        .unwrap();
 
-        assert_ne!(new_combined_encryption, combined_encryption);
+        assert_ne!(new_encrypted_data, encrypted_data);
+        assert_ne!(ephemeral_public_key, new_ephemeral_public_key);
         assert_eq!(data.as_bytes(), new_decrypted_data);
     }
 }

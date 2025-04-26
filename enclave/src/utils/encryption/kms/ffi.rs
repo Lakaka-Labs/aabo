@@ -6,7 +6,7 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
-pub use std::os::raw::{c_int, c_ulong, c_void};
+pub use std::os::raw::{c_int, c_void};
 pub type c_size_t = usize;
 
 /// Must be kept in sync with the endpoint proxy
@@ -46,7 +46,7 @@ pub struct aws_socket_endpoint {
     pub port: u16,
 }
 
-/// Imported SDK APIs
+// Imported SDK APIs
 unsafe extern "C" {
     /// Aws-C-Common
     pub fn aws_byte_buf_from_array(bytes: *mut c_void, len: c_size_t) -> aws_byte_buf;

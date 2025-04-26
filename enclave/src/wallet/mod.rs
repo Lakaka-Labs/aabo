@@ -1,5 +1,5 @@
 use crate::utils::encryption::hybrid::hybrid_encrypt;
-use crate::utils::encryption::kms::{AWSEncryptConfig, Encrypt};
+use crate::utils::encryption::kms::Encrypt;
 use crate::utils::generate::{generate_evm_account, generate_seed, generate_solana_account};
 use crate::utils::sharding::{assemble_shard, shard_data};
 use serde::{Deserialize, Serialize};
@@ -40,46 +40,32 @@ pub struct Wallet {
 }
 
 impl Wallet {
-    // Assuming the first share is always reserved for KMS if KMS is used.
-    // If shares can be used interchangeably, this logic might need adjustment.
     fn encrypt_kms_share<T: Encrypt>(&mut self, config: &T) -> Result<(), WalletError> {
-        let share_to_encrypt = self.shares.get(0).ok_or_else(|| {
-            WalletError::InsufficientShares(
-                "Cannot encrypt KMS share: No shares available.".to_string(),
-            )
-        })?;
-
-        self.encrypted_kms_share = Some(
-            config
-                .encrypt(share_to_encrypt.clone().into_bytes())
-                .map_err(|e| {
+        if !self.shares.is_empty() {
+            let kms_share = self.shares.remove(0);
+            self.encrypted_kms_share =
+                Some(config.encrypt(kms_share.into_bytes()).map_err(|e| {
                     WalletError::ErrorEncryptingShard(format!("Error encrypting KMS share: {}", e))
-                })?,
-        );
-
-        Ok(())
+                })?);
+            Ok(())
+        } else {
+            Err(WalletError::InsufficientShares(
+                "Cannot encrypt KMS share: No shares available.".to_string(),
+            ))
+        }
     }
 
     fn encrypt_other_shares(&mut self, public_keys: Vec<String>) -> Result<(), WalletError> {
-        let starting_share_index = if self.encrypted_kms_share.is_some() {
-            1
-        } else {
-            0
-        };
-
-        let available_shares_count = self.shares.len().saturating_sub(starting_share_index);
-        if available_shares_count < public_keys.len() {
+        if self.shares.len() < public_keys.len() {
             return Err(WalletError::InsufficientShares(format!(
-                "Insufficient shares ({}) available for the {} public keys provided (starting from index {}).",
-                available_shares_count,
+                "Insufficient shares ({}) available for the {} public keys provided).",
+                self.shares.len(),
                 public_keys.len(),
-                starting_share_index
             )));
         }
 
-        let shares_for_hybrid = &self.shares[starting_share_index..]; // Slice of shares to use
-
-        for (share, pk) in shares_for_hybrid.iter().zip(public_keys.iter()) {
+        for pk in public_keys.iter() {
+            let share = self.shares.remove(0);
             let (ephemeral_public_key, encrypted_share) =
                 hybrid_encrypt(pk.to_string(), share.as_bytes()).map_err(|e| {
                     WalletError::ErrorEncryptingShard(format!(
@@ -89,7 +75,7 @@ impl Wallet {
                 })?;
 
             self.encrypted_shares.push(EncryptedShare {
-                public_key: pk.to_string(), // Dereference pk as it's &&str from iter()
+                public_key: pk.to_string(),
                 encrypted_share,
                 ephemeral_public_key,
             });
@@ -184,7 +170,7 @@ impl Network {
         let seed = match String::from_utf8(seed_byte) {
             Ok(s) => s,
             Err(_) => Err(WalletError::ErrorAssemblingShares(
-                "error assembling seed phrase, this could be caused by insufficient threshold"
+                "error assembling seed phrase, this could be caused by insufficient threshold or corrupted share"
                     .to_string(),
             ))?,
         };
@@ -199,7 +185,7 @@ mod tests {
     use crate::utils::encryption::kms::MockEncrypt;
     use aes_gcm::aead::OsRng;
     use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-    use k256::{PublicKey, SecretKey};
+    use k256::SecretKey;
 
     // --- Basic Network and Wallet Creation Tests ---
     #[test]
@@ -285,8 +271,8 @@ mod tests {
     fn test_reassemble_seed_success() {
         let threshold = 2;
         let total_shares = 3;
-        let (original_seed, shares) = Network::create_and_split_seed(threshold, total_shares)
-            .expect("Setup failed: Could not create/split seed");
+        let (original_seed, shares) =
+            Network::create_and_split_seed(threshold, total_shares).unwrap();
 
         // Use exactly the threshold number of shares
         let shares_to_reassemble = shares.into_iter().take(threshold as usize).collect();
@@ -301,8 +287,8 @@ mod tests {
     fn test_reassemble_seed_error_insufficient_shares() {
         let threshold = 3;
         let total_shares = 5;
-        let (_original_seed, shares) = Network::create_and_split_seed(threshold, total_shares)
-            .expect("Setup failed: Could not create/split seed");
+        let (_original_seed, shares) =
+            Network::create_and_split_seed(threshold, total_shares).unwrap();
 
         // Use fewer than the threshold number of shares
         let shares_to_reassemble = shares.into_iter().take((threshold - 1) as usize).collect();
@@ -310,7 +296,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.err().unwrap() {
-            WalletError::ErrorAssemblingShares(_) => {} // Expected error
+            WalletError::ErrorAssemblingShares(_) => {}
             e => panic!("Expected ErrorAssemblingShares, got {:?}", e),
         }
     }
@@ -319,14 +305,14 @@ mod tests {
     fn test_reassemble_seed_error_corrupted_share() {
         let threshold = 2;
         let total_shares = 3;
-        let (_original_seed, mut shares) = Network::create_and_split_seed(threshold, total_shares)
-            .expect("Setup failed: Could not create/split seed");
+        let (_original_seed, mut shares) =
+            Network::create_and_split_seed(threshold, total_shares).unwrap();
 
         // Corrupt one share slightly (e.g., change a character)
         if !shares.is_empty() && !shares[0].is_empty() {
             let mut corrupted_share_bytes = shares[0].as_bytes().to_vec();
-            corrupted_share_bytes[0] = corrupted_share_bytes[0].wrapping_add(1); // Simple corruption
-            shares[0] = String::from_utf8_lossy(&corrupted_share_bytes).to_string(); // May not be valid UTF8, but sharding likely works on bytes
+            corrupted_share_bytes[0] = corrupted_share_bytes[0].wrapping_add(1);
+            shares[0] = String::from_utf8_lossy(&corrupted_share_bytes).to_string();
         } else {
             panic!("Cannot corrupt empty share");
         }
@@ -350,42 +336,27 @@ mod tests {
     #[test]
     fn test_encrypt_kms_share_success() {
         let mut config = MockEncrypt::new();
-
         let network = Network::Ethereum;
-        // Create a wallet directly to control its initial state
-        let (_seed, shares) = Network::create_and_split_seed(2, 3).unwrap();
-        let mut wallet = Wallet {
-            address: network.generate_address(_seed).unwrap(),
-            shares: shares.clone(),
-            encrypted_kms_share: None,
-            encrypted_shares: Vec::new(),
-        };
+        let mut wallet = network.create(2, 3).unwrap();
 
         assert!(wallet.encrypted_kms_share.is_none());
+        assert_eq!(wallet.shares.len(), 3);
+
         config
             .expect_encrypt()
             .times(1)
             .returning(|data| Ok(BASE64.encode(data)));
         let result = wallet.encrypt_kms_share(&config);
 
-        assert!(
-            result.is_ok(),
-            "encrypt_kms_share failed: {:?}",
-            result.err()
-        );
+        assert_eq!(wallet.shares.len(), 2);
+        assert!(result.is_ok());
         assert!(wallet.encrypted_kms_share.is_some());
-        // The encrypted data is usually base64 encoded, check it's not empty
         assert!(!wallet.encrypted_kms_share.as_ref().unwrap().is_empty());
     }
 
     #[test]
     fn test_encrypt_kms_share_error_no_shares() {
         let mut config = MockEncrypt::new();
-        config
-            .expect_encrypt()
-            .times(0)
-            .returning(|data| Ok(BASE64.encode(data)));
-
         let mut wallet = Wallet {
             address: "0x123".to_string(),
             shares: Vec::new(), // NO shares
@@ -393,24 +364,53 @@ mod tests {
             encrypted_shares: Vec::new(),
         };
 
+        config
+            .expect_encrypt()
+            .times(0)
+            .returning(|data| Ok(BASE64.encode(data)));
         let result = wallet.encrypt_kms_share(&config);
 
         assert!(result.is_err());
         match result.err().unwrap() {
-            WalletError::InsufficientShares(_) => {} // Expected error
+            WalletError::InsufficientShares(_) => {}
             e => panic!("Expected InsufficientShares, got {:?}", e),
         }
-        assert!(wallet.encrypted_kms_share.is_none()); // Should remain None
+        assert!(wallet.encrypted_kms_share.is_none());
+    }
+
+    #[test]
+    fn test_encrypt_other_shares_success() {
+        let network = Network::Ethereum;
+
+        let test_secret_key_1 = SecretKey::random(&mut OsRng);
+        let test_public_key_1 = BASE64.encode(test_secret_key_1.public_key().to_sec1_bytes());
+        let test_secret_key_2 = SecretKey::random(&mut OsRng);
+        let test_public_key_2 = BASE64.encode(test_secret_key_2.public_key().to_sec1_bytes());
+        let public_keys = vec![test_public_key_1, test_public_key_2];
+
+        let mut wallet = network
+            .create(public_keys.len() as u8, public_keys.len())
+            .unwrap();
+
+        assert!(wallet.encrypted_shares.is_empty());
+        assert_eq!(wallet.shares.len(), public_keys.len());
+
+        let result = wallet.encrypt_other_shares(public_keys.clone());
+
+        assert!(result.is_ok());
+        assert!(wallet.shares.is_empty());
+        assert_eq!(wallet.encrypted_shares.len(), public_keys.len());
     }
 
     #[test]
     fn test_encrypt_other_shares_error_no_shares() {
         let mut wallet = Wallet {
             address: "0x123".to_string(),
-            shares: Vec::new(), // NO shares
+            shares: Vec::new(),
             encrypted_kms_share: None,
             encrypted_shares: Vec::new(),
         };
+
         let test_secret_key_1 = SecretKey::random(&mut OsRng);
         let test_public_key_1 = BASE64.encode(test_secret_key_1.public_key().to_sec1_bytes());
 
@@ -419,10 +419,10 @@ mod tests {
         let result = wallet.encrypt_other_shares(public_keys);
         assert!(result.is_err());
         match result.err().unwrap() {
-            WalletError::InsufficientShares(_) => {} // Expected error
+            WalletError::InsufficientShares(_) => {}
             e => panic!("Expected InsufficientShares, got {:?}", e),
         }
-        assert!(wallet.encrypted_shares.is_empty()); // Should remain empty
+        assert!(wallet.encrypted_shares.is_empty());
     }
 
     // --- Combined Creation Method Tests ---
@@ -430,31 +430,28 @@ mod tests {
     #[test]
     fn test_create_with_kms_success() {
         let mut config = MockEncrypt::new();
+        let threshold = 2;
+        let requested_total_shares = 2;
+        let network = Network::Ethereum;
+
         config
             .expect_encrypt()
             .times(1)
             .returning(|data| Ok(BASE64.encode(data)));
-
-        let threshold = 2;
-        let requested_total_shares = 2; 
-        let network = Network::Ethereum;
-
         let result = network.create_with_kms(threshold, requested_total_shares, &config);
 
-        assert!(result.is_ok(), "create_with_kms failed: {:?}", result.err());
+        assert!(result.is_ok());
         let wallet = result.unwrap();
 
         assert!(wallet.address.starts_with("0x"));
-        assert_eq!(wallet.shares.len(), requested_total_shares + 1);
+        assert_eq!(wallet.shares.len(), requested_total_shares); // Since encrypting kms share takes one share
         assert!(wallet.encrypted_kms_share.is_some());
         assert!(!wallet.encrypted_kms_share.as_ref().unwrap().is_empty());
-        assert!(wallet.encrypted_shares.is_empty()); 
+        assert!(wallet.encrypted_shares.is_empty());
     }
 
     #[test]
     fn test_create_encrypted_shares_current_behaviour() {
-        let threshold = 2;
-
         let test_secret_key_1 = SecretKey::random(&mut OsRng);
         let test_secret_key_2 = SecretKey::random(&mut OsRng);
         let test_public_key_1 = BASE64.encode(test_secret_key_1.public_key().to_sec1_bytes());
@@ -462,14 +459,12 @@ mod tests {
         let public_keys = vec![test_public_key_1.clone(), test_public_key_2.clone()];
 
         let network = Network::Solana;
+        let result = network.create_encrypted_shares(public_keys.len() as u8, public_keys.clone());
 
-        let result = network.create_encrypted_shares(threshold, public_keys.clone()); 
-
-        // If `encrypt_other_shares` were fixed, the assertions would be:
         assert!(result.is_ok());
         let wallet = result.unwrap();
         assert!(wallet.address.len() >= 32 && wallet.address.len() <= 44);
-        assert_eq!(wallet.shares.len(), public_keys.len()); 
+        assert!(wallet.shares.is_empty()); // since encrypt other shares takes all remaining share
         assert!(wallet.encrypted_kms_share.is_none());
         assert_eq!(wallet.encrypted_shares.len(), public_keys.len());
         assert_eq!(wallet.encrypted_shares[0].public_key, test_public_key_1);
@@ -479,27 +474,26 @@ mod tests {
     #[test]
     fn test_create_encrypted_shares_with_kms_current_behaviour() {
         let mut config = MockEncrypt::new();
-        config
-            .expect_encrypt()
-            .times(1)
-            .returning(|data| Ok(BASE64.encode(data)));
-
         let threshold = 2;
 
         let test_secret_key_1 = SecretKey::random(&mut OsRng);
         let test_public_key_1 = BASE64.encode(test_secret_key_1.public_key().to_sec1_bytes());
-
         let public_keys = vec![test_public_key_1.clone()]; // Use one PK for simplicity
+        
         let network = Network::Ethereum;
-
+        
+        config
+            .expect_encrypt()
+            .times(1)
+            .returning(|data| Ok(BASE64.encode(data)));
         let result =
             network.create_encrypted_shares_with_kms(threshold, public_keys.clone(), &config);
 
-        // If `encrypt_other_shares` were fixed, the assertions would be:
         assert!(result.is_ok());
         let wallet = result.unwrap();
+        
         assert!(wallet.address.starts_with("0x"));
-        assert_eq!(wallet.shares.len(), public_keys.len() + 1);
+        assert_eq!(wallet.shares.len(), 0); // since encrypt other shares & encrypt kms share takes all remaining share
         assert!(wallet.encrypted_kms_share.is_some());
         assert!(!wallet.encrypted_kms_share.as_ref().unwrap().is_empty());
         assert_eq!(wallet.encrypted_shares.len(), public_keys.len());

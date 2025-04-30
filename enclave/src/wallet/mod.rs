@@ -9,6 +9,8 @@ use thiserror::Error;
 pub enum WalletError {
     #[error("Error generating address")]
     ErrorGeneratingAddress(String),
+    #[error("Error generating seed")]
+    ErrorGeneratingSeed(String),
     #[error("Error sharding seed phrase")]
     ErrorShardingSeed(String),
     #[error("Error encrypting shard")]
@@ -95,7 +97,8 @@ impl Network {
         threshold: u8,
         total_shares: usize,
     ) -> Result<(String, Vec<String>), WalletError> {
-        let seed = generate_seed();
+        let seed =
+            generate_seed().map_err(|e| WalletError::ErrorGeneratingSeed(e.to_string()))?;
         let shares = shard_data(seed.clone().into_bytes(), threshold, total_shares)
             .map_err(|e| WalletError::ErrorShardingSeed(e.to_string()))?;
 
@@ -479,9 +482,9 @@ mod tests {
         let test_secret_key_1 = SecretKey::random(&mut OsRng);
         let test_public_key_1 = BASE64.encode(test_secret_key_1.public_key().to_sec1_bytes());
         let public_keys = vec![test_public_key_1.clone()]; // Use one PK for simplicity
-        
+
         let network = Network::Ethereum;
-        
+
         config
             .expect_encrypt()
             .times(1)
@@ -491,7 +494,7 @@ mod tests {
 
         assert!(result.is_ok());
         let wallet = result.unwrap();
-        
+
         assert!(wallet.address.starts_with("0x"));
         assert_eq!(wallet.shares.len(), 0); // since encrypt other shares & encrypt kms share takes all remaining share
         assert!(wallet.encrypted_kms_share.is_some());

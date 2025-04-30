@@ -6,9 +6,7 @@ edition = "2024"
 [dependencies]
 bip39 = { version = "2.1.0", features = ["rand"] }
 hex = "0.4.3"
-rand = "0.8"
 blahaj = "0.6"
-ethers = "2.0.14"
 solana-sdk = "2.2.2"
 signal-hook-registry = "=1.4.0"
 ed25519-hd-key = "0.3.0"
@@ -20,6 +18,8 @@ aes-gcm = "0.10.3"
 sha2 = "0.10.8"
 base64 = "0.22.1"
 mockall = "0.13.1"
+alloy = { version = "0.15.6", features = ["full"] }
+tiny-hderive = "0.3.0"
 
 [dev-dependencies]
 mockall = "0.13.1"

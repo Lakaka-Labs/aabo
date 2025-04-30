@@ -96,10 +96,10 @@ mod tests {
 
     #[test]
     fn test_shard_and_full_assembly() {
-        let seed = generate_seed();
+        let seed = generate_seed().unwrap();
         let threshold = 3;
         let total_share = 5;
-        
+
         let shares_bytes = shard_data(seed.as_bytes().to_vec(), threshold, total_share).unwrap();
 
         assert_eq!(shares_bytes.len(), total_share);
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_shard_and_partial_assembly() {
-        let seed = generate_seed();
+        let seed = generate_seed().unwrap();
         let threshold = 3;
         let total_share = 5;
 
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn test_shard_and_insufficient_assembly() {
-        let seed = generate_seed();
+        let seed = generate_seed().unwrap();
         let threshold = 3;
         let total_share = 5;
 
@@ -140,7 +140,7 @@ mod tests {
         shares_bytes.pop();
         shares_bytes.pop();
         assert_eq!(shares_bytes.len(), total_share - 3);
-        
+
         let secret = assemble_shard(shares_bytes).unwrap();
         assert_ne!(secret, seed.as_bytes());
     }

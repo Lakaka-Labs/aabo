@@ -1,11 +1,8 @@
-use alloy::signers::local::{PrivateKeySigner};
+use alloy::signers::local::{MnemonicBuilder, coins_bip39::English};
 use bip39::{Language, Mnemonic};
 use ed25519_hd_key::derive_from_path;
-use k256::ecdsa::SigningKey;
 use solana_sdk::signature::{Signer as SolSigner, keypair_from_seed};
-use std::str::FromStr;
 use thiserror::Error;
-use tiny_hderive::bip32::ExtendedPrivKey; 
 
 #[derive(Error, Debug)]
 pub enum GenerateError {
@@ -26,20 +23,12 @@ pub fn generate_seed() -> Result<String, GenerateError> {
 }
 
 pub fn generate_evm_account(seed: &str) -> Result<String, GenerateError> {
-    let mnemonic =
-        Mnemonic::from_str(seed).map_err(|e| GenerateError::ErrorDerivingEVM(e.to_string()))?;
-    let seed = mnemonic.to_seed("");
-    let derivation_path = "m/44'/60'/0'/0/0";
-    
-    let master_key = ExtendedPrivKey::derive(seed.as_slice(), derivation_path).map_err(|_| {
-        GenerateError::ErrorDerivingEVM("Failed to create master key from seed".to_string())
-    })?;
-
-    let signing_key = SigningKey::from_slice(&master_key.secret()).map_err(|_| {
-        GenerateError::ErrorDerivingEVM("Failed to create signing key from derived bytes".to_string())
-    })?;
-
-    let wallet = PrivateKeySigner::from_signing_key(signing_key);
+    let wallet = MnemonicBuilder::<English>::default()
+        .phrase(seed)
+        .build()
+        .map_err(|_| {
+            GenerateError::ErrorDerivingEVM("Failed to create master key from seed".to_string())
+        })?;
 
     Ok(format!("{:?}", wallet.address()))
 }
@@ -70,7 +59,7 @@ mod tests {
         let seed = String::from(
             "caution juice atom organ advance problem want pledge someone senior holiday very",
         );
-        
+
         let evm_address = generate_evm_account(&seed).unwrap();
         assert_eq!(evm_address, "0x58e0fb1aab0b04bd095abcdf34484da47fe9ff77");
 

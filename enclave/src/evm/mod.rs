@@ -1,4 +1,4 @@
-mod sign_eth_transaction;
+mod sign_transaction;
 mod tx_serde_test;
 
 use thiserror::Error;

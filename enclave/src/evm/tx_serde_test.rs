@@ -28,7 +28,7 @@ mod tests {
           "to": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
           "gas": "0x5208",
           "gasPrice": "0x4a817c800",
-          "value": "0xde0b6b3a7640000",
+          "value": "0x2386F26FC10000",
           "input": "0x",
           "nonce": "0x1",
           "chainId": "0x1"
@@ -49,7 +49,7 @@ mod tests {
         );
         assert_eq!(request.gas, Some(0x5208));
         assert_eq!(request.gas_price, Some(0x4a817c800));
-        assert_eq!(request.value, Some(u256("0xde0b6b3a7640000")));
+        assert_eq!(request.value, Some(u256("0x2386F26FC10000")));
         assert_eq!(request.input.input, Some(bytes("0x")));
         assert_eq!(request.nonce, Some(0x1));
         assert_eq!(request.chain_id, Some(1));

@@ -1,4 +1,6 @@
 pub mod sign_transaction;
+mod sign_message;
+
 use thiserror::Error;
 
 #[derive(Error, Debug)]

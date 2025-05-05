@@ -1,10 +1,10 @@
+use crate::evm::SigningError;
 use alloy::consensus::{Signed, Transaction};
 use alloy::network::{TransactionBuilder, TxSignerSync};
 use alloy::primitives::B256;
 use alloy::rpc::types::TransactionRequest;
 use alloy::signers::Signature;
 use alloy::signers::local::PrivateKeySigner;
-use crate::evm::SigningError;
 
 fn u64_to_be(value: u64) -> [u8; 32] {
     let bytes = value.to_be_bytes();
@@ -25,11 +25,8 @@ pub fn sign_transaction(
         .map_err(|e| SigningError::SigningFailed(e.to_string()))?;
 
     let chain_id = typed_transaction.chain_id().unwrap_or_else(|| 0);
-    let signed_tx = Signed::new_unchecked(
-        typed_transaction,
-        signature,
-        B256::new(u64_to_be(chain_id)),
-    );
+    let signed_tx =
+        Signed::new_unchecked(typed_transaction, signature, B256::new(u64_to_be(chain_id)));
 
     let mut rlp_buf = Vec::<u8>::new();
     signed_tx.rlp_encode(&mut rlp_buf);
@@ -43,12 +40,7 @@ pub fn sign_transaction(
 mod test {
     use crate::evm::sign_transaction::sign_transaction;
     use alloy::consensus::transaction::RlpEcdsaDecodableTx;
-    use alloy::consensus::{
-        Signed, TxEip1559, TxEip2930, TxEip4844Variant, TxEnvelope, TxLegacy, TxType,
-        TypedTransaction,
-    };
-    use alloy::eips::Decodable2718;
-    use alloy::rlp::Decodable;
+    use alloy::consensus::{Signed, TxEip1559, TxEip2930};
     use alloy::rpc::types::TransactionRequest;
     use alloy::signers::local::PrivateKeySigner;
 

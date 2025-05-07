@@ -2,6 +2,7 @@ use alloy::signers::local::{MnemonicBuilder, coins_bip39::English};
 use bip39::{Language, Mnemonic};
 use ed25519_hd_key::derive_from_path;
 use solana_sdk::signature::{Signer as SolSigner, keypair_from_seed};
+use std::str::FromStr;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
